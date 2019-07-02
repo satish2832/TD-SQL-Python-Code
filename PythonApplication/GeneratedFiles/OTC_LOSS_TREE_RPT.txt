@@ -1,0 +1,336 @@
+/*************************************************************************************
+
+SCRIPT NAME: FCT_OTC_LOSS_TREE_RPT.BTQ
+
+DESCRIPTION: PROCESS FOR LOSS TREE AT SEMANTIC LAYER
+
+AUTHOR            	    DATE
+
+SRINIVASA RAO KINTALI       2017-03-22 (ORIGINAL)
+
+COMMENTS : THIS JOB SHOULD RUN AFTER THE ETL AND SEMANTIC TABLE FCT_OTC_LOSS_TREE_RPT LOAD FROM OTC
+
+*************************************************************************************/
+
+.RUN FILE=@TD_LOGON@;
+
+SET QUERY_BAND='CAPABILITY=OTC;JOB_STREAM_NM=CNLV-SMOT-LSTREE;JOB_NM=CN_LV_SM_TD_OT_LOSS_TREE;BTEQ_NM=OTC_LOSS_TREE_RPT;'  FOR SESSION;
+
+.SET WIDTH 255
+
+.SET ERROROUT STDOUT
+
+.IF Errorcode <> 0 THEN .QUIT  Errorcode;
+
+/* ------------------------------------------------------------------------------------ */
+
+/* VOLATILE TABLE FOR LAST 13 MONTHS DATA */
+
+/* ------------------------------------------------------------------------------------ */
+
+CREATE VOLATILE TABLE RPT_MNTS AS(
+
+	SELECT CLM_RPT_DT AS RPT_DT,DERIV_RPTG_MO_DT AS DERIV_RPT_DT
+
+	,Row_Number() Over (ORDER BY DERIV_RPTG_MO_DT DESC ) AS RNK
+
+	 FROM @WWP_BASE_VIEW_DB@.WWP_OTC_ME_OPEN_CLM
+
+	QUALIFY RNK <14
+
+	WHERE ETL_JOB_END_DTTM='2999-12-31 00:00:00.000000'
+
+	GROUP BY 1,2
+
+)
+
+WITH DATA ON COMMIT PRESERVE ROWS
+
+;
+
+.IF Errorcode <> 0 THEN .QUIT  Errorcode;
+
+/* ------------------------------------------------------------------------------------ */
+
+/* VOLATILE TABLE FOR UNCLASSIFIED GROUP CODE DATA */
+
+/* ------------------------------------------------------------------------------------ */
+
+CREATE VOLATILE TABLE UNCLASSIFIED AS(
+
+	SEL CLM_RSN_GRP_ID AS UC_CLM_RSN_GRP_ID  FROM @WWP_BASE_VIEW_DB@.WWP_OTC_CLM_RSN_GRP WHERE CLM_RSN_GRP_DESC='UNCLASSIFIED' AND ETL_JOB_END_DTTM='2999-12-31 00:00:00.000000'
+
+)
+
+WITH DATA ON COMMIT PRESERVE ROWS
+
+;
+
+.IF Errorcode <> 0 THEN .QUIT  Errorcode;
+
+BT;
+
+DELETE FROM @BASE_VIEW_DB@.FCT_OTC_LOSS_TREE_RPT;
+
+.IF Errorcode <> 0 THEN .QUIT  Errorcode;
+
+/* -------------------------------------------------------------------------------------------------------------------------------------------- */
+
+/* Insert all the rows to load LOSS TREE data into sem table FCT_OTC_LOSS_TREE_RPT */
+
+/* -------------------------------------------------------------------------------------------------------------------------------------------- */
+
+INSERT INTO @BASE_VIEW_DB@.FCT_OTC_LOSS_TREE_RPT(
+
+CO_ID
+
+,CTRY_CD
+
+,CUST_NUM
+
+,RPT_DT
+
+,CUST_NM
+
+,MO_NUM
+
+,YR_NUM
+
+,LOSS_TREE_DESC
+
+,LOSS_TREE_VAL
+
+)
+
+SELECT
+
+A.CO_ID
+
+,COALESCE(B.CTRY_CD,'UNKWN') AS COUNTRY_CODE
+
+,A.ACTG_DOC_CUST_ID AS CUSTOMER_NO
+
+,A.CLM_RPT_DT AS REPORT_DATE
+
+,COALESCE(CUST_NM,'UNKNOWN') AS CUSTOMER_NAME
+
+,Extract(MONTH From CLM_RPT_DT) AS MO_NUM
+
+,Extract(YEAR From CLM_RPT_DT) AS YR_NUM
+
+,CASE WHEN LR.LOSS_RSN_CD IS NULL THEN 'UNKNOWN'  ELSE	LR.LOSS_RSN_DESC END AS LOSS_RSN_DESC
+
+,Sum(A.EUR_CURY_OUT_AMT) AS BASE_AMOUNT
+
+FROM
+
+(
+
+SEL CO_ID
+
+,A.ACTG_DOC_CUST_ID
+
+,COALESCE(CLM_RSN_GRP_ID,(SEL UC_CLM_RSN_GRP_ID FROM UNCLASSIFIED)) AS CLM_RSN_GRP_ID
+
+,OPEN_CLM_STS_ID
+
+,CLM_RPT_DT
+
+,RGN_IN
+
+,Sum(A.EUR_CURY_OUT_AMT) EUR_CURY_OUT_AMT
+
+FROM @WWP_BASE_VIEW_DB@.WWP_OTC_ME_OPEN_CLM AS A
+
+WHERE A.ETL_JOB_END_DTTM='2999-12-31 00:00:00.000000' 
+
+--AND A.OPEN_CLM_STS_ID IN (1,2,3,4,5,6,7,8)                  
+
+AND A.CLM_NET_DUE_DT < CLM_RPT_DT
+
+AND DERIV_RPTG_MO_DT IN (SELECT DERIV_RPT_DT FROM RPT_MNTS)
+
+AND(A.CLM_ACTG_FL_CD <> 'AP' OR A.CLM_TRAN_SUB_TYPE_CD IN ('CSBI'
+
+,'CSBC'
+
+,'PMNT'
+
+,'RESD'
+
+,'CSBD'))  
+
+group by 1,2,3,4,5,6
+
+union all
+
+SEL CO_ID
+
+,A.ACTG_DOC_CUST_ID
+
+,1
+
+,CASE WHEN A.CLM_NET_DUE_DT < CLM_RPT_DT THEN 999 ELSE 9999 END
+
+,CLM_RPT_DT
+
+,RGN_IN
+
+,Sum(A.EUR_CURY_OUT_AMT) EUR_CURY_OUT_AMT
+
+FROM @WWP_BASE_VIEW_DB@.WWP_OTC_ME_OPEN_CLM AS A
+
+WHERE A.ETL_JOB_END_DTTM='2999-12-31 00:00:00.000000'
+
+AND DERIV_RPTG_MO_DT IN (SELECT DERIV_RPT_DT FROM RPT_MNTS)
+
+AND(A.CLM_ACTG_FL_CD <> 'AP' OR A.CLM_TRAN_SUB_TYPE_CD IN ('CSBI'
+
+,'CSBC'
+
+,'PMNT'
+
+,'RESD'
+
+,'CSBD'))  
+
+group by 1,2,3,4,5,6
+
+) A
+
+INNER JOIN @WWP_BASE_VIEW_DB@.WWP_CO AS B
+
+ON A.CO_ID=B.CO_ID
+
+AND B.ETL_JOB_END_DTTM='2999-12-31 00:00:00.000000' 
+
+INNER JOIN @WWP_BASE_VIEW_DB@.WWP_OTC_LOSS_RSN_ASGNMT AS LRS
+
+ON A.CLM_RSN_GRP_ID  = LRS.CLM_RSN_GRP_ID
+
+AND A.OPEN_CLM_STS_ID=LRS.CLM_STS_ID
+
+AND LRS.ETL_JOB_END_DTTM='2999-12-31 00:00:00.000000'
+
+INNER JOIN WWP_OTC_LOSS_RSN AS LR
+
+ON LRS.LOSS_RSN_CD  = LR.LOSS_RSN_CD
+
+AND LR.ETL_JOB_END_DTTM='2999-12-31 00:00:00.000000'
+
+LEFT JOIN @WWP_BASE_VIEW_DB@.WWP_CUST_CO_ASGNMT CUST
+
+ON TRIM(A.ACTG_DOC_CUST_ID)=CUST.CUST_ID
+
+AND A.CO_ID=CUST.CO_ID
+
+AND A.CLM_RPT_DT=CUST.SNAP_MO_DT
+
+AND CUST.ETL_JOB_END_DTTM='2999-12-31 00:00:00.000000'
+
+WHERE (A.ACTG_DOC_CUST_ID,A.CO_ID ,A.RGN_IN, A.CLM_RPT_DT) NOT IN (
+
+		SELECT CUST_ID , CO_ID, RGN_IN, SNAP_MO_DT FROM @WWP_BASE_VIEW_DB@.WWP_CUST_CO_ASGNMT A
+
+		WHERE (A.RGN_IN IN ('A','E') AND CR_REP_GRP_CD ='99') OR (RGN_IN in ('I','R') AND ACTG_CLERK_GRP_CD ='AB') AND ETL_JOB_END_DTTM='2999-12-31 00:00:00.000000'
+
+)
+
+GROUP BY 1,2,3,4,5,6,7,8;
+
+.IF Errorcode <> 0 THEN .QUIT  Errorcode;
+
+/* -------------------------------------------------------------------------------------------------------------------------------------------- */
+
+/* Insert overdue/Current missing records into sem table FCT_OTC_LOSS_TREE_RPT */
+
+/* -------------------------------------------------------------------------------------------------------------------------------------------- */
+
+INSERT INTO @BASE_VIEW_DB@.FCT_OTC_LOSS_TREE_RPT(
+
+CO_ID
+
+,CTRY_CD
+
+,CUST_NUM
+
+,CUST_NM
+
+,RPT_DT
+
+,MO_NUM
+
+,YR_NUM
+
+,LOSS_TREE_DESC
+
+,LOSS_TREE_VAL
+
+)
+
+SEL CO_ID,CTRY_CD,CUST_NUM,CUST_NM,RPT_DT,MO_NUM,YR_NUM,'CURRENT DEBT',0
+
+FROM
+
+(
+
+SEL CO_ID,CTRY_CD,CUST_NUM,CUST_NM,RPT_DT,MO_NUM,YR_NUM FROM @BASE_VIEW_DB@.FCT_OTC_LOSS_TREE_RPT WHERE LOSS_TREE_DESC NOT IN ('OVERDUE DEBT', 'CURRENT DEBT')
+
+GROUP BY 1,2,3,4,5,6,7
+
+MINUS
+
+SEL CO_ID,CTRY_CD,CUST_NUM,CUST_NM,RPT_DT,MO_NUM,YR_NUM FROM @BASE_VIEW_DB@.FCT_OTC_LOSS_TREE_RPT WHERE LOSS_TREE_DESC IN ('CURRENT DEBT')
+
+GROUP BY 1,2,3,4,5,6,7
+
+) A
+
+UNION ALL
+
+SEL CO_ID,CTRY_CD,CUST_NUM,CUST_NM,RPT_DT,MO_NUM,YR_NUM,'OVERDUE DEBT',0
+
+FROM
+
+(
+
+SEL CO_ID,CTRY_CD,CUST_NUM,CUST_NM,RPT_DT,MO_NUM,YR_NUM FROM @BASE_VIEW_DB@.FCT_OTC_LOSS_TREE_RPT WHERE LOSS_TREE_DESC NOT IN ('OVERDUE DEBT', 'CURRENT DEBT')
+
+GROUP BY 1,2,3,4,5,6,7
+
+MINUS
+
+SEL CO_ID,CTRY_CD,CUST_NUM,CUST_NM,RPT_DT,MO_NUM,YR_NUM FROM @BASE_VIEW_DB@.FCT_OTC_LOSS_TREE_RPT WHERE LOSS_TREE_DESC IN ('OVERDUE DEBT')
+
+GROUP BY 1,2,3,4,5,6,7
+
+) B
+
+;
+
+.IF Errorcode <> 0 THEN .QUIT  Errorcode;
+
+ET;
+
+.IF Errorcode <> 0 THEN .QUIT  Errorcode;
+
+/* ------------------------------------------------------------------------------------ */
+
+/*  COLLECT STATS									*/
+
+/*								                         */
+
+/* ------------------------------------------------------------------------------------ */
+
+CALL DBADMIN.COLLECT_STATS ('@BASE_VIEW_DB@','FCT_OTC_LOSS_TREE_RPT','','V','','','','',STMNTOUT);
+
+ 
+
+.IF Errorcode <> 0 THEN .QUIT  Errorcode;
+
+SELECT Current_Timestamp ;
+
+SET QUERY_BAND=NONE FOR SESSION;
+
+.QUIT 0
+

@@ -1,0 +1,65 @@
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <SchemaVersion>2.0</SchemaVersion>
+    <ProjectGuid>b12f9d34-8ccd-48c7-a8fb-8a4f04d893c8</ProjectGuid>
+    <ProjectHome>.</ProjectHome>
+    <StartupFile>StartUp.py</StartupFile>
+    <SearchPath>
+    </SearchPath>
+    <WorkingDirectory>.</WorkingDirectory>
+    <OutputPath>.</OutputPath>
+    <Name>PythonApplication</Name>
+    <RootNamespace>PythonApplication</RootNamespace>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+    <DebugSymbols>true</DebugSymbols>
+    <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+    <DebugSymbols>true</DebugSymbols>
+    <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Helpers\DirectMappingsHelper.py">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Helpers\FileHelper.py">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="StartUp.py">
+      <SubType>Code</SubType>
+    </Compile>
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="Helpers\" />
+    <Folder Include="Models\" />
+    <Folder Include="Config\" />
+    <Folder Include="GeneratedFiles\" />
+    <Folder Include="SourceFiles\" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="Config\Mappings.yaml" />
+    <Content Include="SourceFiles\DIM_OTC_SCH_COMB_HIER.BTQ" />
+    <Content Include="SourceFiles\OTC_AUTO_ORD_RPT.BTQ" />
+    <Content Include="SourceFiles\OTC_CLMS_WT_AVG_RPT.BTQ" />
+    <Content Include="SourceFiles\OTC_DAY_SLS_OUT_RPT.BTQ" />
+    <Content Include="SourceFiles\OTC_HOME_SCRN_RPT.BTQ" />
+    <Content Include="SourceFiles\OTC_INVC_ACUR_RPT.BTQ" />
+    <Content Include="SourceFiles\OTC_KEY_PERF_IN_TGT.BTQ" />
+    <Content Include="SourceFiles\OTC_LATE_PRC_RPT.BTQ" />
+    <Content Include="SourceFiles\OTC_LOSS_TREE_RPT.BTQ" />
+    <Content Include="SourceFiles\OTC_ME_OPEN_CLMS_RPT.BTQ" />
+    <Content Include="SourceFiles\OTC_OVRDU_DEBT_AGEING_RPT.BTQ" />
+    <Content Include="SourceFiles\OTC_OVRDU_DEBT_RPT.BTQ" />
+  </ItemGroup>
+  <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
+  <!-- Uncomment the CoreCompile target to enable the Build command in
+       Visual Studio and specify your pre- and post-build commands in
+       the BeforeBuild and AfterBuild targets below. -->
+  <!--<Target Name="CoreCompile" />-->
+  <Target Name="BeforeBuild">
+  </Target>
+  <Target Name="AfterBuild">
+  </Target>
+</Project>

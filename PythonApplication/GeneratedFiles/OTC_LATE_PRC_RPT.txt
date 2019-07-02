@@ -1,0 +1,232 @@
+/*************************************************************************************
+
+SCRIPT NAME: FCT_OTC_LATE_PRC_RPT.BTQ
+
+DESCRIPTION: PROCESS FOR Late Pricing AT SEMANTIC LAYER
+
+AUTHOR            	DATE
+
+Srinivasa Rao Kintali   2017-05-30 (ORIGINAL)
+
+COMMENTS : THIS JOB SHOULD RUN AFTER THE ETL
+
+*************************************************************************************/
+
+.RUN FILE=@TD_LOGON@;
+
+SET QUERY_BAND='CAPABILITY=OTC;JOB_STREAM_NM=CNLV-SMOT-LATPRC;JOB_NM=CN_LV_SM_TD_OT_LATE_PRC;BTEQ_NM=OTC_LATE_PRC_RPT;'  FOR SESSION;
+
+.SET WIDTH 255
+
+.SET ERROROUT STDOUT
+
+/* ------------------------------------------------------------------------------------ */
+
+/* VOLATILE MAX AND MIN MONTH TABLE */
+
+/* ------------------------------------------------------------------------------------ */
+
+CREATE VOLATILE TABLE MX_MTH AS(
+
+SELECT Min(RPTG_MO_DT) AS MIN_MTH,Max(RPTG_MO_DT) AS MAX_MTH 
+
+FROM @WWP_BASE_VIEW_DB@.WWP_OTC_PRC_COND_AGG
+
+WHERE ETL_JOB_END_DTTM='2999-12-31 00:00:00.000000'
+
+)
+
+WITH DATA ON COMMIT PRESERVE ROWS
+
+;
+
+.IF Errorcode <> 0 THEN .QUIT  Errorcode;
+
+/* ------------------------------------------------------------------------------------ */
+
+/* VOLATILE TABLE FOR LAST 13 MONTHS DATA */
+
+/* ------------------------------------------------------------------------------------ */
+
+CREATE VOLATILE TABLE RPT_MNTS AS(
+
+	SELECT RPTG_MO_DT AS RPT_DT,DERIV_RPTG_YR_NUM, DERIV_RPTG_MO_NUM
+
+	,Row_Number() Over (ORDER BY RPTG_MO_DT DESC ) AS RNK
+
+	 FROM @WWP_BASE_VIEW_DB@.WWP_OTC_PRC_COND_AGG
+
+	QUALIFY RNK <14
+
+	WHERE ETL_JOB_END_DTTM='2999-12-31 00:00:00.000000'
+
+	GROUP BY 1,2,3
+
+)
+
+WITH DATA ON COMMIT PRESERVE ROWS
+
+;
+
+.IF Errorcode <> 0 THEN .QUIT  Errorcode;
+
+BT;
+
+DELETE FROM @BASE_VIEW_DB@.FCT_OTC_LATE_PRC_RPT;
+
+.IF Errorcode <> 0 THEN .QUIT  Errorcode;
+
+/* -------------------------------------------------------------------------------------------------------------------------------------------- */
+
+/* Insert all the rows to load Late Pricing data into sem table FCT_OTC_LATE_PRC_RPT */
+
+/* -------------------------------------------------------------------------------------------------------------------------------------------- */
+
+INSERT INTO @BASE_VIEW_DB@.FCT_OTC_LATE_PRC_RPT(
+
+RGN_ID                        
+
+,CLUS_ID                       
+
+,MCO_ID                        
+
+,MSO_ID                        
+
+,CTRY_CD                                      
+
+,RPT_DT                        
+
+,LATE_PRC_INVC_CONDS_CNT
+
+,TOT_CONDS_CNT      
+
+,LATE_PRC_PCT
+
+,MAT_LATE_PRC_INVC_CONDS_CNT
+
+,MAT_TOT_CONDS_CNT      
+
+,MAT_LATE_PRC_PCT
+
+)
+
+SELECT * FROM
+
+(
+
+SELECT 
+
+RGN_ID
+
+,CLUS_ID 
+
+,MCO_ID 
+
+,MSO_ID
+
+,CTRY_CD
+
+,A.RPTG_MO_DT
+
+,COALESCE(NUMERATOR,0) AS NUMERATOR
+
+,COALESCE(DENOMINATOR,0) AS DENOMINATOR
+
+,Coalesce(NUMERATOR,0)*100.00/NullIfZero(DENOMINATOR) AS LATE_PRICING
+
+,CASE WHEN RPTG_MO_DT>MIN_MTH+305 THEN Sum(COALESCE(NUMERATOR,0)) Over (PARTITION BY RGN_ID,CLUS_ID,MCO_ID,MSO_ID,CTRY_CD ORDER BY RPTG_MO_DT ROWS BETWEEN 11 Preceding AND CURRENT ROW) END AS  NUMERATOR_SUM
+
+,CASE WHEN RPTG_MO_DT>MIN_MTH+305 THEN Sum(COALESCE(DENOMINATOR,0)) Over (PARTITION BY RGN_ID,CLUS_ID,MCO_ID,MSO_ID,CTRY_CD ORDER BY RPTG_MO_DT ROWS BETWEEN 11 Preceding AND CURRENT ROW) END AS  DENOMINATOR_SUM
+
+,100.00*NUMERATOR_SUM/NullIfZero(DENOMINATOR_SUM) AS LATE_PRICING_AVG
+
+from
+
+(
+
+SELECT 
+
+COALESCE(GEO.RGN_ID,'ALL') AS RGN_ID
+
+,COALESCE(GEO.CLUS_ID,'ALL') AS CLUS_ID 
+
+,COALESCE(GEO.MCO_ID,'ALL') AS MCO_ID 
+
+,COALESCE(GEO.MSO_ID,'ALL') AS MSO_ID
+
+,COALESCE(A.CTRY_CD,'ALL') AS CTRY_CD
+
+,A.RPTG_MO_DT
+
+,SUM(COALESCE(LATE_CRT_PRC_COND_CNT,0)) AS NUMERATOR
+
+,SUM(COALESCE(TOT_COND_CNT,0)) AS DENOMINATOR
+
+FROM @WWP_BASE_VIEW_DB@.WWP_OTC_PRC_COND_AGG A
+
+INNER JOIN @WWP_BASE_VIEW_DB@.WWP_GEO_ANY_LVL GEO
+
+ON A.CTRY_CD = GEO.CTRY_CD
+
+AND GEO.GEO_TYPE_CD='CTRY'
+
+AND GEO.ETL_JOB_END_DTTM='2999-12-31 00:00:00.000000'
+
+AND A.ETL_JOB_END_DTTM='2999-12-31 00:00:00.000000'
+
+AND RPTG_MO_DT >= (SELECT Add_Months(Min(RPT_DT),-12) FROM RPT_MNTS)
+
+GROUP BY GROUPING SETS 
+
+(
+
+(GEO.RGN_ID,GEO.CLUS_ID,GEO.MCO_ID,GEO.MSO_ID,A.CTRY_CD,RPTG_MO_DT)
+
+,(GEO.RGN_ID,GEO.CLUS_ID,GEO.MCO_ID,GEO.MSO_ID,RPTG_MO_DT)
+
+,(GEO.RGN_ID,GEO.CLUS_ID,GEO.MCO_ID,RPTG_MO_DT)
+
+,(GEO.RGN_ID,GEO.CLUS_ID,RPTG_MO_DT)
+
+,(GEO.RGN_ID,RPTG_MO_DT)
+
+,(RPTG_MO_DT)
+
+)
+
+) A
+
+CROSS JOIN MX_MTH
+
+) A
+
+WHERE RPTG_MO_DT IN (SELECT RPT_DT FROM RPT_MNTS)
+
+;
+
+.IF Errorcode <> 0 THEN .QUIT  Errorcode;
+
+ET;
+
+.IF Errorcode <> 0 THEN .QUIT  Errorcode;
+
+/* ------------------------------------------------------------------------------------ */
+
+/*  COLLECT STATS									*/
+
+/*								                         */
+
+/* ------------------------------------------------------------------------------------ */
+
+CALL DBADMIN.COLLECT_STATS ('@BASE_VIEW_DB@','FCT_OTC_LATE_PRC_RPT','','V','','','','',STMNTOUT);
+
+ 
+
+.IF Errorcode <> 0 THEN .QUIT  Errorcode;
+
+SELECT Current_Timestamp ;
+
+SET QUERY_BAND=NONE FOR SESSION;
+
+.QUIT 0
+
